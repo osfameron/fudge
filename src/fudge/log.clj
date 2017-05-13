@@ -36,6 +36,12 @@
             [cheshire.core :as json])
   (:gen-class))
 
+(defn call [i k & args] 
+  (apply (k i) args))
+
+(defn invoke [i k & args] 
+  (apply (k i) i args))
+
 (def default-config
   {:setup-config-fn
     (fn [config]
@@ -53,49 +59,45 @@
         (merge log-meta data)))   
    :log?-fn
     (fn [config data]
-      (when (contains? (:valid-levels config) (:level data))
-            data))
+      (contains? (:valid-levels config) (:level data)))
    :date-fn (comp dt/format dt/zoned-date-time)
+   :pre-format-fn #(update % :level name)
    :format-fn json/generate-string
    :output-fn println
    :level :info
-   :levels [:trace :debug :info :warn :error :fatal]})
+   :levels [:trace :debug :info :warn :error :fatal :report]})
 ;; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
 
-(defn make-logging-fn [config]
-  (let [c (->> config
-               (merge default-config)
-               (#( (:setup-config-fn %) %)))
-               ;; ... but why doesn't following work?
-               ;; ((juxt :setup-config-fn identity))
-               ;; seq
-               ;; eval)
-               ;; No matching ctor found for class clojure.core$comp$fn__4727
-        {:keys [:prepare-fn :format-fn :output-fn :log?-fn]} c]
-    (fn [level data]
-        (some->> data
-                 (prepare-fn c level)
-                 (log?-fn c)
-                 format-fn
-                 output-fn))))
+(def aws-log-format
+  {:format-fn (fn [record]
+                (let [date (:date record)
+                      record (dissoc record :date)]
+                  (str date " " (json/generate-string record))))}) 
 
-(def log (make-logging-fn {}))
+(def plain-format
+  {:format-fn (fn [{:keys [date level message]}]
+                (str date " [" level "] " message))})
 
-(defn spy-with [logger transform level data]
+(def json-format
+   {:format-fn json/generate-string})
+
+(defn get-logger [& config]
+  (-> (apply merge default-config config)
+      (invoke :setup-config-fn))) 
+
+(defn log [c level data]
+  (let [record (invoke c :prepare-fn level data)]
+    (when (invoke c :log?-fn record)
+      (->> record
+           (call c :pre-format-fn)
+           (call c :format-fn)
+           (call c :output-fn)))))
+
+(defn spy-with [c transform level data]
   (doto data
     (->> transform
-         (logger level))))
+         (log c level))))
 
-(defn spy [logger & args]
-  (apply spy-with logger identity args))
+(defn spy [c level & args]
+  (apply spy-with c identity level args))
 
-(comment
-  (log :info "hello there")
-
-  ;; pipeline example
-  (->> 1
-       inc
-       (spy log :info)
-       inc
-       (spy-with log (fn [n] {:number n}) :info)))
-       
