@@ -1,103 +1,119 @@
-;; # Minimal logging library
-;;
-;; Principles:
-;;
-;; - https://12factor.net/logs
-;;   - single appender, e.g. STDOUT is trivial.
-;;  (Everything else can be built atop this if you think you need it
-;;   (but you probably don't))
-;;
-;; - functions all the way down
-;;
-;; - just Clojure data-structures
-;;
-;; - trivial to create appenders
-;;    (e.g. like Timbre docs claim it is)
-;;
-;; - play nicely with pipeline style (like timbre's spy)
-;;
-;; Secondary concerns:
-;;
-;; - compiling out hidden log-levels with macros
-;; - tracing/line numbers and such
-;; - dynamic reloading of config
-;;
-;; Explicitly NOT design concerns
-;;
-;; - multiple appenders (just provide a map as your function)
-;; - Java logging (your appender can interface if needed)
-;; - writing to files (>> /var/log/foo.log or add to function)
-;; - logrotation (logrotate.d or add to appender function)
-;; - filtering (grep - or custom valid-function
-;; - complicated dispatch
+;; Minimal logging library
 
 (ns fudge.log
   (:require [java-time :as dt]
             [cheshire.core :as json])
   (:gen-class))
 
-(defn call [i k & args] 
-  (apply (k i) args))
+(defn call 
+  "Call a function indexed by the keyword k
+   in a logging config c."
+  [c k & args] 
+  (apply (k c) args))
 
-(defn invoke [i k & args] 
-  (apply (k i) i args))
+(defn invoke
+  "Invoke a function indexed by the keyword k
+   in a logging config c, passing the config itself as
+   the first parameter (similar to OO method invocation)."
+  [c k & args] 
+  (apply (k c) c args))
+
+(defn set-valid-levels
+      "Set :valid-levels for logging given:
+        - an ordered list of :levels 
+        - the minimum :level"
+      [{level :level levels :levels :as config}]
+      (assoc config
+             :valid-levels
+             (->> levels
+                  (drop-while (partial not= level))
+                  set)))
+
+(defn check-level
+     "Check that the :level in the log call is one of
+      the accepted :valid-levels"
+     [config data]
+     (contains? (:valid-levels config) (:level data)))
+
+(defn normalize-data
+      "Ensure the `data` structure being logged is in hash-map form.
+       If not, turn it into a hash with the original data under the
+       :message key"
+      [data]
+      (if (map? data) data {:message data}))
+
+(defn prepare-data-for-logging
+    "Prepare the `data` structure being logged by setting the :level
+     and :date values"
+    [config data level]
+    (->> data
+         normalize-data
+         (merge {:date (call config :date-fn)
+                 :level level})))
 
 (def default-config
-  {:setup-config-fn
-    (fn [config]
-      (let [{level :level levels :levels} config]
-        (assoc config
-               :valid-levels
-               (->> levels
-                    (drop-while (partial not= level))
-                    set))))
-   :prepare-fn
-    (fn [config level data]
-      (let [data (if (map? data) data {:message data})
-            log-meta {:date ((:date-fn config))
-                      :level level}]
-        (merge log-meta data)))   
-   :log?-fn
-    (fn [config data]
-      (contains? (:valid-levels config) (:level data)))
+  "Base logger configuration. By default we do the following
+    - accept a standard set of logging levels
+    - log on :info or greater
+    - add a date in a standard format
+    - output as a Clojure data structure
+    - to Standard Output only
+   We expect the user to request a more elaborate logger using
+   the get-logger function."
+  {:level :info
+   :levels [:trace :debug :info :warn :error :fatal :report]
+   :setup-config-fn set-valid-levels
+   :prepare-fn prepare-data-for-logging
+   :log?-fn check-level
    :date-fn (comp dt/format dt/zoned-date-time)
-   :pre-format-fn #(update % :level name)
-   :format-fn json/generate-string
-   :output-fn println
-   :level :info
-   :levels [:trace :debug :info :warn :error :fatal :report]})
-;; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
+   :format-fn identity
+   :output-fn println}) 
+; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
 
-(def aws-log-format
-  {:format-fn (fn [record]
-                (let [date (:date record)
-                      record (dissoc record :date)]
-                  (str date " " (json/generate-string record))))}) 
-
-(def plain-format
-  {:format-fn (fn [{:keys [date level message]}]
-                (str date " [" level "] " message))})
-
-(def json-format
-   {:format-fn json/generate-string})
-
-(defn get-logger [& config]
+(defn get-logger
+  "Return a logger from the supplied config hash(es)"
+  [& config]
   (-> (apply merge default-config config)
       (invoke :setup-config-fn))) 
 
-(defn log [c level data]
-  (let [record (invoke c :prepare-fn level data)]
+(defn log
+  "Log a record with the config, level, and data provided"
+  [c level data]
+  (let [record (invoke c :prepare-fn data level)]
     (when (invoke c :log?-fn record)
       (->> record
-           (call c :pre-format-fn)
            (call c :format-fn)
            (call c :output-fn)))))
 
-(defn spy-with [c transform level data]
+(defn spy-with
+  "Log a record about a data value, first applying the transform
+   supplied.  Returns the original, untransformed value.  Designed
+   to be used in threaded pipelines.  For example:
+      (-> {:counter 1}
+          (update :counter inc)
+          (spy-with #(str \"The number is now \" (:counter %)))
+          (update :counter inc))"
+  [c transform level data]
   (doto data
     (->> transform
          (log c level))))
 
-(defn spy [c level & args]
-  (apply spy-with c identity level args))
+(defn spy
+  "Log a record about a data value as per `spy-with`, but with no transformation."
+  [c level data]
+  (spy-with c identity level data))
 
+(def aws-log-format
+  "Config for AWS JSON Log event format"
+  {:format-fn (fn [record]
+                (let [[date record] ((juxt get dissoc) record :date)]
+                  (str date " " (json/generate-string record))))}) 
+
+(def plain-format
+  "Config for a plain text log message format"
+  {:format-fn (fn [{:keys [date level message]}]
+                (str date " [" level "] " message))})
+
+(def json-format
+  "Config for a JSON serialized format" 
+  {:format-fn json/generate-string})
