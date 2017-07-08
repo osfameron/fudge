@@ -77,31 +77,48 @@
         (is (= "Hello" result))
         (is (= "Hello" @out))))))
 
+(deftest test-formats
+  (let [record {:date "2017-07-08"
+                :level :info
+                :message "Hello"}]
+    (testing "format-plain"
+      (is (= "2017-07-08 [:info] Hello"
+             (format-plain record))))
+    (testing "format-aws-log"
+      (is (= "2017-07-08 {\"level\":\"info\",\"message\":\"Hello\"}"
+             (format-aws-log record))))))
+
 ;; End to end tests
 
 (defn date-mocker []
   (let [counter (atom 0)]
     {:date-fn (fn [& args] (format "2017-05-12T18:%02d" (swap! counter inc)))}))
 
-(defn string-logger []
-  (get-logger (date-mocker) plain-format))
+(defn plain-logger []
+  (get-logger (date-mocker) plain-config))
 
-(deftest test-string-logger
+(defn json-logger []
+  (get-logger (date-mocker) json-config))
+
+(defn aws-logger []
+  (get-logger (date-mocker) aws-log-config))
+
+(deftest test-plain-logger
   (testing "single log output"
-      (let [logger (string-logger)
+      (let [logger (plain-logger)
             result (with-out-str
                      (log logger :info "foo"))]
         (is (= "2017-05-12T18:01 [:info] foo\n" result))))
 
   (testing "multiple lines output"
-    (let [logger (get-logger (date-mocker) plain-format)
+    (let [logger (plain-logger)
           result (with-out-str
                     (log logger :info "foo")
                     (log logger :error "bar"))]
       (is (= "2017-05-12T18:01 [:info] foo\n2017-05-12T18:02 [:error] bar\n" result))))
 
   (testing "pipeline"
-    (let [logger (get-logger (date-mocker) plain-format)
+    (let [logger (plain-logger)
           result (with-out-str
                    (->> 1
                         inc
@@ -109,3 +126,15 @@
                         inc
                         (spy-with logger #(* 10 %) :info)))]
       (is (= "2017-05-12T18:01 [:info] 2\n2017-05-12T18:02 [:info] 30\n" result)))))
+
+(deftest test-json-logger
+  (let [logger (json-logger)
+        result (with-out-str
+                 (log logger :info "foo"))]
+    (is (= "{\"date\":\"2017-05-12T18:01\",\"level\":\"info\",\"message\":\"foo\"}\n" result))))
+
+(deftest test-aws-logger
+  (let [logger (aws-logger)
+        result (with-out-str
+                 (log logger :info "foo"))]
+    (is (= "2017-05-12T18:01 {\"level\":\"info\",\"message\":\"foo\"}\n" result))))

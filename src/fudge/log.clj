@@ -103,17 +103,25 @@
   [c level data]
   (spy-with c identity level data))
 
-(def aws-log-format
-  "Config for AWS JSON Log event format"
-  {:format-fn (fn [record]
-                (let [[date record] ((juxt get dissoc) record :date)]
-                  (str date " " (json/generate-string record))))}) 
+(defn format-plain
+  "Simple plain string formatter"
+  [{:keys [:date :level :message]}]
+  (str date " [" level "] " message))
 
-(def plain-format
+(def plain-config
   "Config for a plain text log message format"
-  {:format-fn (fn [{:keys [date level message]}]
-                (str date " [" level "] " message))})
+  {:format-fn format-plain})
 
-(def json-format
-  "Config for a JSON serialized format" 
+(def json-config
+  "Config for a JSON serialized format"
   {:format-fn json/generate-string})
+
+(defn format-aws-log
+  "Format function for AWS Cloudwatch logs: a date, followed by a JSON string"
+  [record]
+  (let [[date record'] ((juxt get dissoc) record :date)]
+    (str date " " (json/generate-string record'))))
+
+(def aws-log-config
+  "Config for AWS JSON Log event format"
+  {:format-fn format-aws-log})
