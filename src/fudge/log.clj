@@ -47,7 +47,9 @@
    If not, turn it into a hash with the original data under the
    `:message` key"
   [data]
-  (if (map? data) data {:message data}))
+  (if (map? data)
+      data
+      {:message data}))
 
 (defn prepare-data-for-logging
   "Prepare the `data` structure being logged by setting the `:level`
@@ -68,8 +70,6 @@
 ;; - `:level`      a keyword specifying minimum log-level (default :info)
 ;; - `:levels`     ordered list of log levels
 ;;                 (default [:trace :debug :info :warn :error :fatal :report])
-;; - `:log?-fn`    whether to output log or not
-;;                 (default: check if log-level provided matches minimum level)
 ;; - `:format-fn`  function to transform the log data
 ;;                 (default `identity`, eg. leave as Clojure data, but logging
 ;;                 configs are provided for common formats:
@@ -81,6 +81,8 @@
 ;;
 ;; (For more complex requirements.  Changing these may change the behaviour of logging.)
 ;;
+;; - `:log?-fn`           whether to output log or not
+;;                        (default: check if log-level provided matches minimum level)
 ;; - `:prepare-fn`        coerces the log data into a hash-map including
 ;;                        date and log-level
 ;; - `:date-fn`           function to retrieve date (used by :prepare-fn)
@@ -97,13 +99,14 @@
    - to Standard Output only"
   {:level :info
    :levels [:trace :debug :info :warn :error :fatal :report]
+   :format-fn identity
+   :output-fn println
+   ; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
+
+   :log?-fn check-level
    :setup-config-fn set-valid-levels
    :prepare-fn prepare-data-for-logging
-   :log?-fn check-level
-   :date-fn (comp dt/format dt/zoned-date-time)
-   :format-fn identity
-   :output-fn println})
-; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
+   :date-fn (comp dt/format dt/zoned-date-time)})
 
 ;; # Create a logger
 
@@ -161,8 +164,9 @@
 (defn format-aws-log
   "Format function for AWS Cloudwatch logs: a date, followed by a JSON string"
   [record]
-  (let [[date record'] ((juxt get dissoc) record :date)]
-    (str date " " (json/generate-string record'))))
+  (-> record
+      ((juxt get(comp json/generate-string dissoc)) :date)
+      ((partial clojure.string/join " "))))
 
 (def aws-log-config
   "Config for AWS JSON Log event format"
