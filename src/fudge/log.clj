@@ -5,22 +5,22 @@
             [cheshire.core :as json])
   (:gen-class))
 
-(defn call 
+(defn call
   "Call a function indexed by the keyword k
    in a logging config c."
-  [c k & args] 
+  [c k & args]
   (apply (k c) args))
 
 (defn invoke
   "Invoke a function indexed by the keyword k
    in a logging config c, passing the config itself as
    the first parameter (similar to OO method invocation)."
-  [c k & args] 
+  [c k & args]
   (apply (k c) c args))
 
 (defn set-valid-levels
       "Set :valid-levels for logging given:
-        - an ordered list of :levels 
+        - an ordered list of :levels
         - the minimum :level"
       [{level :level levels :levels :as config}]
       (assoc config
@@ -67,14 +67,14 @@
    :log?-fn check-level
    :date-fn (comp dt/format dt/zoned-date-time)
    :format-fn identity
-   :output-fn println}) 
+   :output-fn println})
 ; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
 
 (defn get-logger
   "Return a logger from the supplied config hash(es)"
   [& config]
   (-> (apply merge default-config config)
-      (invoke :setup-config-fn))) 
+      (invoke :setup-config-fn)))
 
 (defn log
   "Log a record with the config, level, and data provided"
