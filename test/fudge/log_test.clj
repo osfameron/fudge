@@ -57,10 +57,10 @@
                   :format-fn (juxt :level :message)
                   :output-fn (partial clojure.string/join " ")}]
       (is (= ":info MSG" (log logger :info {:message "MSG"})))))
-  (testing "Don't log")
+  (testing "Don't log"
     (let [logger {:prepare-fn (constantly {})
                   :log?-fn (constantly false)}]
-      (is (= nil (log logger :info {:message "MSG"})))))
+      (is (= nil (log logger :info {:message "MSG"}))))))
 
 (deftest test-spy-and-spy-with
   (let [out (atom "")
