@@ -12,6 +12,9 @@
             :fn
             1))))
 
+(deftest test-calling-meta
+  (is (= {:ns "fudge.log-test" :file "fudge/log_test.clj" :line 16} (calling-meta))))
+
 (deftest test-valid-levels
   (is (= #{:info :warn :error}
          (-> {:level :info
@@ -34,11 +37,16 @@
 
 (deftest test-prepare-data-for-logging
   (let [config {:date-fn (constantly "2017-07-08")}
-        expected {:message "Hello World",
+        expected {:message "Hello World"
+                  :ns "fudge.log_test"
+                  :file "fudge/log_test.clj"
+                  :line 30
                   :level :info
                   :date "2017-07-08"}]
-    (is (= expected (prepare-data-for-logging config "Hello World" :info)))
-    (is (= expected (prepare-data-for-logging config {:message "Hello World"} :info)))))
+    (is (= expected (prepare-data-for-logging config "Hello World" :info
+                                              {:ns "fudge.log_test" :file "fudge/log_test.clj" :line 30 :name "test"})))
+    (is (= expected (prepare-data-for-logging config {:message "Hello World"} :info
+                                              {:ns "fudge.log_test" :file "fudge/log_test.clj" :line 30 :name "test"})))))
 
 (deftest test-get-logger
   (let [logger (get-logger {:setup-config-fn #(assoc % :foo :foo)}
@@ -50,21 +58,28 @@
     (testing "Config retained values from base config that weren't overridden"
       (is (= identity (:format-fn logger))))))
 
-(deftest test-log
+(deftest test-log!
   (testing "Log"
-    (let [logger {:prepare-fn (fn [c d l] (assoc d :level l))
+    (let [logger {:prepare-fn (fn [c d l m] (assoc d :level l))
                   :log?-fn (constantly true)
                   :format-fn (juxt :level :message)
                   :output-fn (partial clojure.string/join " ")}]
-      (is (= ":info MSG" (log logger :info {:message "MSG"})))))
+      (is (= ":info MSG" (log! logger {:file "path/to/file.clj" :line 30 :ns *ns*} :info {:message "MSG"})))))
   (testing "Don't log"
     (let [logger {:prepare-fn (constantly {})
                   :log?-fn (constantly false)}]
-      (is (= nil (log logger :info {:message "MSG"}))))))
+      (is (= nil (log! logger {:file "path/to/file.clj" :line 30 :ns *ns*} :info {:message "MSG"}))))))
+
+(deftest test-log
+  (let [logger {:prepare-fn (fn [c d l m] (assoc d :level l))
+                :log?-fn (constantly true)
+                :format-fn (juxt :level :message)
+                :output-fn (partial clojure.string/join " ")}]
+    (is (= ":info MSG" (log logger :info {:message "MSG"})))))
 
 (deftest test-spy-and-spy-with
   (let [out (atom "")
-        logger {:prepare-fn (fn [c  d l] d)
+        logger {:prepare-fn (fn [c d l m] d)
                 :log?-fn (constantly true)
                 :format-fn identity
                 :output-fn (partial reset! out)}]
@@ -79,13 +94,16 @@
 
 (deftest test-formats
   (let [record {:date "2017-07-08"
+                :ns "fudge.log-test"
+                :line 10
+                :file "fudge/log_test.clj"
                 :level :info
                 :message "Hello"}]
     (testing "format-plain"
-      (is (= "2017-07-08 [:info] Hello"
+      (is (= "2017-07-08 [fudge.log-test:10] [info] Hello"
              (format-plain record))))
     (testing "format-aws-log"
-      (is (= "2017-07-08 {\"level\":\"info\",\"message\":\"Hello\"}"
+      (is (= "2017-07-08 {\"ns\":\"fudge.log-test\",\"line\":10,\"file\":\"fudge/log_test.clj\",\"level\":\"info\",\"message\":\"Hello\"}"
              (format-aws-log record))))))
 
 ;; End to end tests
@@ -108,14 +126,14 @@
       (let [logger (plain-logger)
             result (with-out-str
                      (log logger :info "foo"))]
-        (is (= "2017-05-12T18:01 [:info] foo\n" result))))
+        (is (= "2017-05-12T18:01 [fudge.log-test:128] [info] foo\n" result))))
 
   (testing "multiple lines output"
     (let [logger (plain-logger)
           result (with-out-str
                     (log logger :info "foo")
                     (log logger :error "bar"))]
-      (is (= "2017-05-12T18:01 [:info] foo\n2017-05-12T18:02 [:error] bar\n" result))))
+      (is (= "2017-05-12T18:01 [fudge.log-test:134] [info] foo\n2017-05-12T18:02 [fudge.log-test:135] [error] bar\n" result))))
 
   (testing "pipeline"
     (let [logger (plain-logger)
@@ -125,16 +143,16 @@
                         (spy logger :info)
                         inc
                         (spy-with logger #(* 10 %) :info)))]
-      (is (= "2017-05-12T18:01 [:info] 2\n2017-05-12T18:02 [:info] 30\n" result)))))
+      (is (= "2017-05-12T18:01 [fudge.log-test:143] [info] 2\n2017-05-12T18:02 [fudge.log-test:145] [info] 30\n" result)))))
 
 (deftest test-json-logger
   (let [logger (json-logger)
         result (with-out-str
                  (log logger :info "foo"))]
-    (is (= "{\"date\":\"2017-05-12T18:01\",\"level\":\"info\",\"message\":\"foo\"}\n" result))))
+    (is (= "{\"date\":\"2017-05-12T18:01\",\"ns\":\"fudge.log-test\",\"file\":\"fudge/log_test.clj\",\"line\":151,\"level\":\"info\",\"message\":\"foo\"}\n" result))))
 
 (deftest test-aws-logger
   (let [logger (aws-logger)
         result (with-out-str
                  (log logger :info "foo"))]
-    (is (= "2017-05-12T18:01 {\"level\":\"info\",\"message\":\"foo\"}\n" result))))
+    (is (= "2017-05-12T18:01 {\"ns\":\"fudge.log-test\",\"file\":\"fudge/log_test.clj\",\"line\":157,\"level\":\"info\",\"message\":\"foo\"}\n" result))))
