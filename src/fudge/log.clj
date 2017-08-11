@@ -140,28 +140,45 @@
            (call c :output-fn)))))
 
 (defmacro log
-  "Log a record with the config, level, and data provided"
+  "Log a record with the config, level, and data provided."
   [c level data]
   `(log! ~c (calling-meta) ~level ~data))
 
-(defmacro spy-with
+(defmacro spy-with->>
   "Log a record about a data value, first applying the transform
    supplied.  Returns the original, untransformed value.  Designed
-   to be used in threaded pipelines.  For example:
+   to be used in thread-last pipelines.  For example:
 
-      (->> {:counter 1}
-           (update :counter inc)
-           (spy-with #(str \"The number is now \" (:counter %)))
-           (update :counter inc))"
+      (->> [1 2 3 4 5]
+           (map inc)
+           (spy-with->> logger #(str \"List contains \" (pr-str %)) :info)
+           (map inc))"
   [c transform level data]
   `(doto ~data
     (->> (~transform)
          (log ~c ~level))))
 
-(defmacro spy
-  "Log a record about a data value as per `spy-with`, but with no transformation."
+(defmacro spy-with->
+  "Log a record about a data value, first applying the transform
+   supplied.  Returns the original, untransformed value.  Designed
+   to be used in thread-first pipelines.  For example:
+
+      (-> {:counter 1}
+          (update :counter inc)
+          (spy-with-> logger #(str \"The number is now \" (:counter %)) :info)
+          (update :counter inc))"
+  [data c transform level]
+  `(spy-with->> ~c ~transform ~level ~data))
+
+(defmacro spy->>
+  "Log a record about a data value as per `spy-with->>`, but with no transformation."
   [c level data]
-  `(spy-with ~c identity ~level ~data))
+  `(spy-with->> ~c identity ~level ~data))
+
+(defmacro spy->
+  "Log a record about a data value as per `spy-with->`, but with no transformation."
+  [data c level]
+  `(spy-with->> ~c identity ~level ~data))
 
 ;; # Common format configs
 
