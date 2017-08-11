@@ -20,6 +20,15 @@
   [c k & args]
   (apply (k c) c args))
 
+(defmacro calling-meta
+  "Used by other macros to get the namespace, file and line of the log call.
+   Builds a def with a generated symbol to expand and evaluate for the info."
+  []
+  `(let [meta# (meta (def sym#))]
+    (-> meta#
+        (select-keys [:ns :file :line])
+        (update :ns str))))
+
 ;; # Log-levels
 
 (defn set-valid-levels
@@ -52,12 +61,15 @@
       {:message data}))
 
 (defn prepare-data-for-logging
-  "Prepare the `data` structure being logged by setting the `:level`
-   and `:date` values"
-  [config data level]
+  "Prepare the `data` structure being logged by setting the `:level`,
+   `:date`, `:ns`, `:file` and `:line` values"
+  [config data level calling-meta]
   (->> data
        normalize-data
        (merge {:date (call config :date-fn)
+               :ns (:ns calling-meta)
+               :file (:file calling-meta)
+               :line (:line calling-meta)
                :level level})))
 
 ;; # The logger configuration
@@ -118,40 +130,62 @@
 
 ;; # Main logging functions
 
-(defn log
-  "Log a record with the config, level, and data provided"
-  [c level data]
-  (let [record (invoke c :prepare-fn data level)]
+(defn log!
+  "Log a record with the config, level, form metadata and data provided"
+  [c calling-meta level data]
+  (let [record (invoke c :prepare-fn data level calling-meta)]
     (when (invoke c :log?-fn record)
       (->> record
            (call c :format-fn)
            (call c :output-fn)))))
 
-(defn spy-with
+(defmacro log
+  "Log a record with the config, level, and data provided."
+  [c level data]
+  `(log! ~c (calling-meta) ~level ~data))
+
+(defmacro spy-with->>
   "Log a record about a data value, first applying the transform
    supplied.  Returns the original, untransformed value.  Designed
-   to be used in threaded pipelines.  For example:
+   to be used in thread-last pipelines.  For example:
+
+      (->> [1 2 3 4 5]
+           (map inc)
+           (spy-with->> logger #(str \"List contains \" (pr-str %)) :info)
+           (map inc))"
+  [c transform level data]
+  `(doto ~data
+    (->> (~transform)
+         (log ~c ~level))))
+
+(defmacro spy-with->
+  "Log a record about a data value, first applying the transform
+   supplied.  Returns the original, untransformed value.  Designed
+   to be used in thread-first pipelines.  For example:
 
       (-> {:counter 1}
           (update :counter inc)
-          (spy-with #(str \"The number is now \" (:counter %)))
+          (spy-with-> logger #(str \"The number is now \" (:counter %)) :info)
           (update :counter inc))"
-  [c transform level data]
-  (doto data
-    (->> transform
-         (log c level))))
+  [data c transform level]
+  `(spy-with->> ~c ~transform ~level ~data))
 
-(defn spy
-  "Log a record about a data value as per `spy-with`, but with no transformation."
+(defmacro spy->>
+  "Log a record about a data value as per `spy-with->>`, but with no transformation."
   [c level data]
-  (spy-with c identity level data))
+  `(spy-with->> ~c identity ~level ~data))
+
+(defmacro spy->
+  "Log a record about a data value as per `spy-with->`, but with no transformation."
+  [data c level]
+  `(spy-with->> ~c identity ~level ~data))
 
 ;; # Common format configs
 
 (defn format-plain
   "Simple plain string formatter"
-  [{:keys [:date :level :message]}]
-  (str date " [" level "] " message))
+  [{:keys [:ns :line :date :level :message]}]
+  (str date " [" ns ":" line "] [" (name level) "] " message))
 
 (def plain-config
   "Config for a plain text log message format"
