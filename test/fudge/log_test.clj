@@ -2,9 +2,6 @@
   (:require [clojure.test :refer :all]
             [fudge.log :refer :all]))
 
-(deftest test-call
-  (is (= 2 (call {:fn inc} :fn 1))))
-
 (deftest test-invoke
   (is (= 2 (invoke
             {:fn (fn [c & args] (apply + (:val c) args))
@@ -48,14 +45,14 @@
     (testing "Config ran :setup-config-fn"
       (is (= :foo (:foo logger))))
     (testing "Config retained values from base config that weren't overridden"
-      (is (= identity (:format-fn logger))))))
+      (is (= default-levels (:levels logger))))))
 
 (deftest test-log
   (testing "Log"
     (let [logger {:prepare-fn (fn [c d l] (assoc d :level l))
                   :log?-fn (constantly true)
-                  :format-fn (juxt :level :message)
-                  :output-fn (partial clojure.string/join " ")}]
+                  :format-fn (simple (juxt :level :message))
+                  :output-fn (simple (partial clojure.string/join " "))}]
       (is (= ":info MSG" (log logger :info {:message "MSG"})))))
   (testing "Don't log"
     (let [logger {:prepare-fn (constantly {})
@@ -66,8 +63,8 @@
   (let [out (atom "")
         logger {:prepare-fn (fn [c  d l] d)
                 :log?-fn (constantly true)
-                :format-fn identity
-                :output-fn (partial reset! out)}]
+                :format-fn (simple identity)
+                :output-fn (simple (partial reset! out))}]
     (testing "spy-with"
       (let [result (spy-with logger count :info "Hello")]
         (is (= "Hello" result))

@@ -7,18 +7,19 @@
 
 ;; # Utility functions for logging configs
 
-(defn call
-  "Call a function indexed by the keyword k
-   in a logging config c."
-  [c k & args]
-  (apply (k c) args))
-
 (defn invoke
   "Invoke a function indexed by the keyword k
    in a logging config c, passing the config itself as
    the first parameter (similar to OO method invocation)."
   [c k & args]
   (apply (k c) c args))
+
+(defn simple
+  "Convert a simple function into an `invoke`-able one, which
+   happens to ignore its first argument."
+  [f]
+  (fn [_ & args]
+    (apply f args)))
 
 ;; # Log-levels
 
@@ -57,7 +58,7 @@
   [config data level]
   (->> data
        normalize-data
-       (merge {:date (call config :date-fn)
+       (merge {:date (invoke config :date-fn)
                :level level})))
 
 ;; # The logger configuration
@@ -89,6 +90,7 @@
 ;; - `:setup-config-fn`   sets up log-level data structures
 ;;                        (could be specialised to do setup for output)
 
+(def default-levels [:trace :debug :info :warn :error :fatal :report])
 (def default-config
   "Base logger configuration. By default we do the following
 
@@ -98,15 +100,15 @@
    - output as a Clojure data structure
    - to Standard Output only"
   {:level :info
-   :levels [:trace :debug :info :warn :error :fatal :report]
-   :format-fn identity
-   :output-fn println
+   :levels default-levels
+   :format-fn (simple identity)
+   :output-fn (simple println)
    ; but see http://yellerapp.com/posts/2014-12-11-14-race-condition-in-clojure-println.html
 
    :log?-fn check-level
    :setup-config-fn set-valid-levels
    :prepare-fn prepare-data-for-logging
-   :date-fn (comp dt/format dt/zoned-date-time)})
+   :date-fn (simple (comp dt/format dt/zoned-date-time))})
 
 ;; # Create a logger
 
@@ -124,8 +126,8 @@
   (let [record (invoke c :prepare-fn data level)]
     (when (invoke c :log?-fn record)
       (->> record
-           (call c :format-fn)
-           (call c :output-fn)))))
+           (invoke c :format-fn)
+           (invoke c :output-fn)))))
 
 (defn spy-with
   "Log a record about a data value, first applying the transform
@@ -155,11 +157,11 @@
 
 (def plain-config
   "Config for a plain text log message format"
-  {:format-fn format-plain})
+  {:format-fn (simple format-plain)})
 
 (def json-config
   "Config for a JSON serialized format"
-  {:format-fn json/generate-string})
+  {:format-fn (simple json/generate-string)})
 
 (defn format-aws-log
   "Format function for AWS Cloudwatch logs: a date, followed by a JSON string"
@@ -170,4 +172,4 @@
 
 (def aws-log-config
   "Config for AWS JSON Log event format"
-  {:format-fn format-aws-log})
+  {:format-fn (simple format-aws-log)})
